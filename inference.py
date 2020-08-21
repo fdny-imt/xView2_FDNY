@@ -151,5 +151,5 @@ def main(args):
 
 
 if __name__ == '__main__':
-    arguments = Options
+    arguments = Options()
     main(arguments)
