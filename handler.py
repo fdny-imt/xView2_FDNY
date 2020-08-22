@@ -32,14 +32,14 @@ class Files(object):
         with rasterio.open(self.pre) as src:
             return src.transform
 
-    def infer(self):
+    def infer(self, model, model_config):
         """
         Passes object to inference.
         :return: True if successful
         """
 
         try:
-            inference.main(self.opts)
+            inference.infer_one(model, model_config, self.opts)
             self.georef(self.loc, 'loc')
             self.georef(self.dmg, 'dmg')
         except Exception as e:
@@ -95,7 +95,7 @@ def main():
 
     pre_files = get_files(args.pre_directory)
     post_files = get_files(args.post_directory)
-    print("Got files")
+    print("Got files: Pre({}), Post({})".format(len(pre_files), len(post_files)))
 
     # TODO: Can be removed after chip creation is implemented
     #assert string_len_check(pre_files, post_files)
@@ -149,9 +149,12 @@ def main():
             post)
             )
 
+    model, model_config = inference.load_eval_model(
+        args.model_config_path, args.model_weight_path, args.is_use_gpu)
+
     print('Inferring building locations...')
     for obj in tqdm(pairs):
-        obj.loc = obj.infer()
+        obj.loc = obj.infer(model, model_config)
 
 
 if __name__ == '__main__':

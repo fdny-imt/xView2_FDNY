@@ -96,9 +96,12 @@ def build_image_transforms():
     ])
 
 
-def main(args):
-    config = CfgNode.load_cfg(open(args.model_config_path, 'rb'))
-    ckpt_path = args.model_weight_path
+def load_eval_model(model_config_path, model_weight_path, is_use_gpu):
+    '''
+    Loads model from arguments for inference
+    '''
+    config = CfgNode.load_cfg(open(model_config_path, 'rb'))
+    ckpt_path = model_weight_path
 
     torch.backends.cudnn.deterministic = False
     torch.backends.cudnn.benchmark = True
@@ -107,17 +110,28 @@ def main(args):
     model.load_state_dict(torch.load(ckpt_path, map_location='cpu')['state_dict'])
     model.eval()
 
-    model_wrapper = ModelWraper(model, args.is_use_gpu, config.MODEL.IS_SPLIT_LOSS)
+    model_wrapper = ModelWraper(
+        model, is_use_gpu, config.MODEL.IS_SPLIT_LOSS)
     model_wrapper.eval()
+    return model_wrapper, config
+
+
+def load_image_pair_from_options(options, is_tiff):
+    if is_tiff:
+        pre_image = tifffile.imread(options.in_pre_path)
+        post_image = tifffile.imread(options.in_post_path)
+    else:
+        pre_image = imread(options.in_pre_path)
+        post_image = imread(options.in_post_path)
+    return pre_image, post_image
+
+
+def infer_one(model_wrapper, config, options):
 
     image_transforms = build_image_transforms()
 
-    if config.DATASET.IS_TIFF:
-        pre_image = tifffile.imread(args.in_pre_path)
-        post_image = tifffile.imread(args.in_post_path)
-    else:
-        pre_image = imread(args.in_pre_path)
-        post_image = imread(args.in_post_path)
+    pre_image, post_image = load_image_pair_from_options(
+        options, config.DATASET.IS_TIFF)
 
     inputs_pre = image_transforms(pre_image)
     inputs_post = image_transforms(post_image)
@@ -135,10 +149,10 @@ def main(args):
         loc = loc.detach().cpu().numpy().astype(np.uint8)[0]
         cls = copy.deepcopy(loc)
 
-    imsave(args.out_loc_path, loc)
-    imsave(args.out_cls_path, cls)
+    imsave(options.out_loc_path, loc)
+    imsave(options.out_cls_path, cls)
 
-    if args.is_vis:
+    if options.is_vis:
         mask_map_img = np.zeros((cls.shape[0], cls.shape[1], 3), dtype=np.uint8)
         mask_map_img[cls == 1] = (255, 255, 255)
         mask_map_img[cls == 2] = (229, 255, 50)
@@ -146,8 +160,17 @@ def main(args):
         mask_map_img[cls == 4] = (255, 0, 0)
         compare_img = np.concatenate((pre_image, mask_map_img, post_image), axis=1)
 
-        out_dir = os.path.dirname(args.out_loc_path)
+        out_dir = os.path.dirname(options.out_loc_path)
         imsave(os.path.join(out_dir, 'compare_img.png'), compare_img)
+
+
+def main(args):
+    model_wrapper, config = load_eval_model(
+        args.model_config_path,
+        args.model_weight_path,
+        args.is_use_gpu
+    )
+    infer_one(model_wrapper, config, args)
 
 
 if __name__ == '__main__':
