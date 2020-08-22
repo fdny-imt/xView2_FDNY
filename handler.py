@@ -76,6 +76,15 @@ def get_files(dirname, extensions=['.png', '.tif', '.jpg'], recursive=True):
 def string_len_check(pre, post):
     return len(pre) == len(post)
 
+def validate_args(args):
+    assert(args.pre_directory.exists())
+    assert(args.post_directory.exists())
+    #TODO: See if these are created. wmb
+    #assert(args.staging_directory.exists())
+    #assert(args.output_directory.exists())
+    assert(args.model_config_path.exists())
+    assert(args.model_weight_path.exists())
+    #TODO: Consider validation on non-path arguments. wmb
 
 def main():
     parser = argparse.ArgumentParser(description='Create arguments for xView 2 handler.')
@@ -87,8 +96,14 @@ def main():
     parser.add_argument('--pre_crs', help='The Coordinate Reference System (CRS) for the pre-disaster imagery.')
     parser.add_argument('--post_crs', help='The Coordinate Reference System (CRS) for the post-disaster imagery.')
     parser.add_argument('--destination_crs', metavar='EPSG:4326', help='The Coordinate Reference System (CRS) for the output overlays.')
+    parser.add_argument('--model-config-path', default='configs/model.yaml', type=Path)
+    parser.add_argument('--model-weight-path', default='weights/weight.pth', type=Path)
+    parser.add_argument('--is-use-gpu', action='store_true')
+    parser.add_argument('--is-vis', action='store_true')
 
     args = parser.parse_args()
+
+    validate_args(args)
 
     make_staging_structure(args.staging_directory)
     make_output_structure(args.output_directory)
