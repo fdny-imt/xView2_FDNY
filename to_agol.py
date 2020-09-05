@@ -44,7 +44,7 @@ def get_feature_set(polys):
 
 def agol_append(user, pw, src_feats, dest_fs, layer):
     gis = arcgis.gis.GIS(username=user, password=pw)
-    layer = gis.content.get(dest_fs).layers[layer]
+    layer = gis.content.get(dest_fs).layers[int(layer)]
     layer.edit_features(adds=src_feats, rollback_on_failure=True)
 
-    return len(src_feats.features)
+    return len(src_feats)
