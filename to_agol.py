@@ -30,7 +30,7 @@ def create_polys(in_files):
     return polygons
 
 
-def get_feature_set(polys, dst_crs):
+def get_feature_set(polys):
     polygons = []
     for geom, val in polys:
         esri_shape = arcgis.geometry.Geometry.from_shapely(geom)
@@ -42,7 +42,9 @@ def get_feature_set(polys, dst_crs):
     return polygons
 
 
-def agol_append(user, pw, src_feats, dest_fs):
+def agol_append(user, pw, src_feats, dest_fs, layer):
     gis = arcgis.gis.GIS(username=user, password=pw)
-    layer = gis.content.get(dest_fs).layers[0]
-    print(layer.edit_features(adds=src_feats, rollback_on_failure=True))
+    layer = gis.content.get(dest_fs).layers[layer]
+    layer.edit_features(adds=src_feats, rollback_on_failure=True)
+
+    return len(src_feats.features)

@@ -11,6 +11,7 @@ import sys
 
 import numpy as np
 from raster_processing import *
+from to_agol import *
 import rasterio.warp
 from shapely.geometry import mapping
 import torch
@@ -177,6 +178,10 @@ def main():
     parser.add_argument('--destination_crs', default='EPSG:4326', help='The Coordinate Reference System (CRS) for the output overlays.')
     parser.add_argument('--create_overlay_mosaic', default=False, action='store_true', help='True/False to create a mosaic out of the overlays')
     parser.add_argument('--create_shapefile', default=False, action='store_true', help='True/False to create shapefile from damage overlay')
+    parser.add_argument('--agol_user', default=None, help='ArcGIS online username')
+    parser.add_argument('--agol_password', default=None, help='ArcGIS online password')
+    parser.add_argument('--agol_feature_service', default=None, help='ArcGIS online feature service to append')
+    parser.add_argument('--agol_layer_num', default=None, help='Layer in ArcGIS feature service to append (number)')
 
     args = parser.parse_args()
 
@@ -271,12 +276,28 @@ def main():
         overlay_files = [x for x in overlay_files]
         overlay_mosaic = create_mosaic(overlay_files, Path(f"{args.output_directory}/mosaics/overlay.tif"))
 
+    # Get files for creating shapefile and/or pushing to AGOL
+    if args.create_shapefile or args.agol_user:
+        dmg_files = get_files(Path(args.output_directory) / 'dmg')
+
     if args.create_shapefile:
         print('Creating shapefile')
-        files = get_files(Path(args.output_directory) / 'dmg')
-        create_shapefile(files,
+        create_shapefile(dmg_files,
                          Path(args.output_directory).joinpath('shapes') / 'damage.shp',
                          args.destination_crs)
+
+    if args.agol_user and args.agol_password and args.agol_feature_service and args.agol_layer_num:
+        agol_polys = create_polys(dmg_files)
+        feat_set = get_feature_set(agol_polys)
+        try:
+            new_feat = agol_append(args.agol_user,
+                                   args.agol_password,
+                                   feat_set,
+                                   args.agol_feature_service,
+                                   args.agol_layer_num)
+            print(f'Appended {new_feat} new features to ArcGIS online.')
+        except Exception as e:
+            print(f'Error appending to ArcGIS online. Error: {e}')
 
     # Complete
     print('Run complete!')
