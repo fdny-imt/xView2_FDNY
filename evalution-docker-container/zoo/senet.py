@@ -359,7 +359,7 @@ class SENet(nn.Module):
                 ('bn1', nn.BatchNorm2d(inplanes)),
                 ('relu1', nn.ReLU(inplace=True)),
             ]
-        # To preserve compatibility with Caffe weights `ceil_mode=True`
+        # To preserve compatibility with Caffe weights_fifth_place `ceil_mode=True`
         # is used instead of `padding=1`.
         self.pool = nn.MaxPool2d(3, stride=2, ceil_mode=True)
         self.layer0 = nn.Sequential(OrderedDict(layer0_modules))

@@ -30,7 +30,7 @@ cv2.ocl.setUseOpenCL(False)
 test_dir = 'test/images'
 pred_folder = 'pred_loc_val'
 train_dirs = ['train', 'tier3']
-models_folder = 'weights'
+models_folder = 'weights_fifth_place'
 
 all_files = []
 for d in train_dirs:

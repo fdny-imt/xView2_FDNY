@@ -27,7 +27,7 @@ cv2.ocl.setUseOpenCL(False)
 
 test_dir = 'test/images/pre'
 pred_folder = 'pred50_loc_tuned'
-models_folder = 'weights'
+models_folder = 'weights_fifth_place'
 
 if __name__ == '__main__':
     t0 = timeit.default_timer()

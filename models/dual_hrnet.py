@@ -531,7 +531,7 @@ class HighResolutionNet(nn.Module):
         return x
 
     def init_weights(self, pretrained='', ):
-        logger.info('=> init weights from normal distribution')
+        logger.info('=> init weights_fifth_place from normal distribution')
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 nn.init.normal_(m.weight, std=0.001)

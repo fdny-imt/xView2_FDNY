@@ -39,7 +39,7 @@ class Options(object):
 
     def __init__(self, pre_path='input/pre', post_path='input/post',
                  out_loc_path='output/loc', out_dmg_path='output/dmg', out_overlay_path='output/over',
-                 model_config='configs/model.yaml', model_weights='weights/weight.pth',
+                 model_config='configs/model.yaml', model_weights='weights_fifth_place/weight.pth',
                  geo_profile=None, use_gpu=False, vis=False):
         self.in_pre_path = pre_path
         self.in_post_path = post_path
@@ -279,7 +279,7 @@ def main():
     parser.add_argument('--post_directory', metavar='/path/to/post/files/', type=Path, required=True)
     parser.add_argument('--staging_directory', metavar='/path/to/staging/', type=Path, required=True)
     parser.add_argument('--output_directory', metavar='/path/to/output/', type=Path, required=True)
-    parser.add_argument('--model_weight_path', metavar='/path/to/model/weights', type=Path)
+    parser.add_argument('--model_weight_path', metavar='/path/to/model/weights_fifth_place', type=Path)
     parser.add_argument('--model_config_path', metavar='/path/to/model/config', type=Path)
     parser.add_argument('--is_use_gpu', action='store_true', help="If True, use GPUs")
     parser.add_argument('--n_procs', default=4, help="Number of processors for multiprocessing", type=int)

@@ -26,7 +26,7 @@ from utils import preprocess_inputs
 cv2.setNumThreads(0)
 cv2.ocl.setUseOpenCL(False)
 
-models_folder = 'weights' #/work/
+models_folder = 'weights_fifth_place' #/work/
 
 if __name__ == '__main__':
     t0 = timeit.default_timer()

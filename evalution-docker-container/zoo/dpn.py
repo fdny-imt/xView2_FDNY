@@ -4,7 +4,7 @@ Ported to PyTorch by [Ross Wightman](https://github.com/rwightman/pytorch-dpn-pr
 Based on original MXNet implementation https://github.com/cypw/DPNs with
 many ideas from another PyTorch implementation https://github.com/oyam/pytorch-DPNs.
 
-This implementation is compatible with the pretrained weights
+This implementation is compatible with the pretrained weights_fifth_place
 from cypw's MXNet implementation.
 """
 import os

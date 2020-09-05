@@ -12,7 +12,7 @@ import random
 random.seed(1)
 
 class XViewFirstPlaceLocModel(nn.Module):
-    def __init__(self, model_size, models_folder='weights', devices=[0,0,0],
+    def __init__(self, model_size, models_folder='weights_fifth_place', devices=[0,0,0],
                  load_models=True, dp_mode=False):
         super(XViewFirstPlaceLocModel, self).__init__()
         self.models = []
@@ -110,7 +110,7 @@ class XViewFirstPlaceLocModel(nn.Module):
 
 
 class XViewFirstPlaceClsModel(XViewFirstPlaceLocModel):
-    def __init__(self, model_size, models_folder='weights',
+    def __init__(self, model_size, models_folder='weights_fifth_place',
                  devices=[0,0,0], dp_mode=False):
         super(XViewFirstPlaceClsModel, self).__init__(model_size,
                                                       models_folder=models_folder,

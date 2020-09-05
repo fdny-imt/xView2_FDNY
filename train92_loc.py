@@ -44,7 +44,7 @@ cv2.ocl.setUseOpenCL(False)
 
 train_dirs = ['train', 'tier3']
 
-models_folder = 'weights'
+models_folder = 'weights_fifth_place'
 
 input_shape = (512, 512)
 

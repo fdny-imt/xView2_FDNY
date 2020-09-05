@@ -1,6 +1,6 @@
 __pycache__/
 .vscode/
-weights/
+weights_fifth_place/
 .idea/
 x_post.ph
 tests/data/input/staging/

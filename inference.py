@@ -28,7 +28,7 @@ class Options(object):
 
     def __init__(self, pre_path='input/pre', post_path='input/post',
                  out_loc_path='output/loc', out_dmg_path='output/dmg', out_overlay_path='output/over',
-                 model_config='configs/model.yaml', model_weights='weights/weight.pth',
+                 model_config='configs/model.yaml', model_weights='weights_fifth_place/weight.pth',
                  geo_profile=None, use_gpu=False, vis=False):
         self.in_pre_path = pre_path
         self.in_post_path = post_path
@@ -49,7 +49,7 @@ def parse_cli_args():
     parser.add_argument('out_loc_path', type=str, default='test_images/test_loc_00000.png')
     parser.add_argument('out_cls_path', type=str, default='test_images/test_cls_00000.png')
     parser.add_argument('--model_config_path', type=str, default='configs/model.yaml')
-    parser.add_argument('--model_weight_path', type=str, default='weights/weight.pth')
+    parser.add_argument('--model_weight_path', type=str, default='weights_fifth_place/weight.pth')
     parser.add_argument('--is_use_gpu', action='store_true', dest='is_use_gpu')
     parser.add_argument('--is_vis', action='store_true', dest='is_vis')
 
