@@ -1,30 +1,56 @@
-import argparse
-from functools import partial
+import cv2
+import timeit
 import glob
-import multiprocessing as mp
+import argparse
 import os
 from pathlib import Path
-import random
-import resource
-import string
 import sys
+import resource
+from collections import defaultdict
+from os import makedirs, path
 
+from functools import partial
+import multiprocessing as mp
+mp.set_start_method('spawn', force=True)
 import numpy as np
 from raster_processing import *
-import rasterio.warp
 from shapely.geometry import mapping
+import rasterio.warp
 import torch
 from torch.utils.data import DataLoader
 from yacs.config import CfgNode
+from skimage.morphology import square, dilation
 
 from tqdm import tqdm
+#import ray
 
 from dataset import XViewDataset
-from models.dual_hrnet import get_model
-import inference
-from inference import ModelWrapper, argmax, run_inference
-from utils import build_image_transforms
+from models import XViewFirstPlaceLocModel, XViewFirstPlaceClsModel
 
+
+import functools
+import logging
+import struct
+import sys
+
+logger = logging.getLogger()
+
+class Options(object):
+
+    def __init__(self, pre_path='input/pre', post_path='input/post',
+                 out_loc_path='output/loc', out_dmg_path='output/dmg', out_overlay_path='output/over',
+                 model_config='configs/model.yaml', model_weights='weights/weight.pth',
+                 geo_profile=None, use_gpu=False, vis=False):
+        self.in_pre_path = pre_path
+        self.in_post_path = post_path
+        self.out_loc_path = out_loc_path
+        self.out_cls_path = out_dmg_path
+        self.out_overlay_path = out_overlay_path
+        self.model_config_path = model_config
+        self.model_weight_path = model_weights
+        self.geo_profile = geo_profile
+        self.is_use_gpu = use_gpu
+        self.is_vis = vis
 
 class Files(object):
 
@@ -37,7 +63,7 @@ class Files(object):
         self.over = output_directory.joinpath('over').joinpath(f'{self.ident}.tif').resolve()
         self.profile = self.get_profile()
         self.transform = self.profile["transform"]
-        self.opts = inference.Options(pre_path=self.pre,
+        self.opts = Options(pre_path=self.pre,
                                       post_path=self.post,
                                       out_loc_path=self.loc,
                                       out_dmg_path=self.dmg,
@@ -100,8 +126,9 @@ def get_files(dirname, extensions=['.png', '.tif', '.jpg']):
 
     files = [path.resolve() for path in files]
 
-    match = [f for f in files if f.suffix.lower() in extensions]
+    match = [f for f in files if f.suffix in extensions]
     return match
+
 
 
 def reproject_helper(args, raster_tuple, procnum, return_dict):
@@ -117,49 +144,135 @@ def reproject_helper(args, raster_tuple, procnum, return_dict):
         return None
 
 
-def postprocess_and_write(config, result_dict):
+def postprocess_and_write(result_dict):
     """
     Postprocess results from inference and write results to file
-    :param config: configuration dictionary
     :param result_dict: dictionary containing all required opts for each example
     """
+    _thr = [0.38, 0.13, 0.14]
+    pred_coefs = [1.0] * 4 # not 12, b/c already took mean over 3 in each subset
+    loc_coefs = [1.0] * 4
 
-    if config.MODEL.IS_SPLIT_LOSS:
-        loc, cls = argmax(result_dict['loc'], result_dict['cls'])
-        loc = loc.numpy().astype(np.uint8)
-        cls = cls.numpy().astype(np.uint8)
-    else:
-        loc = torch.argmax(result_dict['loc'], dim=0, keepdim=False)
-        loc = loc.numpy().astype(np.uint8)
-        cls = copy.deepcopy(loc)
+    preds = []
+    _i = -1
+    for k,v in result_dict.items():
+        if 'cls' in k:
+            _i += 1
+            # I think the below can just be replaced by v['cls'] -- shoul dcheck
+            msk = v['cls'].numpy()
+            preds.append(msk * pred_coefs[_i])
 
-    result_dict['geo_profile'].update(dtype=rasterio.uint8)
+    preds = np.asarray(preds).astype('float').sum(axis=0) / np.sum(pred_coefs) / 255
 
-    with rasterio.open(result_dict['out_loc_path'], 'w', **result_dict['geo_profile']) as dst:
+    loc_preds = []
+    _i = -1
+    for k,v in result_dict.items():
+        if 'loc' in k:
+            _i += 1
+            msk = v['loc'].numpy()
+            loc_preds.append(msk * loc_coefs[_i])
+
+    loc_preds = np.asarray(loc_preds).astype('float').sum(axis=0) / np.sum(loc_coefs) / 255
+
+    msk_dmg = preds[..., 1:].argmax(axis=2) + 1
+    msk_loc = (1 * ((loc_preds > _thr[0]) | ((loc_preds > _thr[1]) & (msk_dmg > 1) & (msk_dmg < 4)) | ((loc_preds > _thr[2]) & (msk_dmg > 1)))).astype('uint8')
+
+    msk_dmg = msk_dmg * msk_loc
+    _msk = (msk_dmg == 2)
+    if _msk.sum() > 0:
+        _msk = dilation(_msk, square(5))
+        msk_dmg[_msk & msk_dmg == 1] = 2
+
+    msk_dmg = msk_dmg.astype('uint8')
+
+    loc = msk_loc
+    cls = msk_dmg
+
+    sample_result_dict = result_dict['34loc']
+    sample_result_dict['geo_profile'].update(dtype=rasterio.uint8)
+
+    with rasterio.open(sample_result_dict['out_loc_path'], 'w', **sample_result_dict['geo_profile']) as dst:
         dst.write(loc, 1)
 
-    with rasterio.open(result_dict['out_cls_path'], 'w', **result_dict['geo_profile']) as dst:
+    with rasterio.open(sample_result_dict['out_cls_path'], 'w', **sample_result_dict['geo_profile']) as dst:
         dst.write(cls, 1)
 
-    if result_dict['is_vis']:
+    if sample_result_dict['is_vis']:
+        #TODO: Make sure this works with First Place code!
         mask_map_img = np.zeros((cls.shape[0], cls.shape[1], 3), dtype=np.uint8)
         mask_map_img[cls == 1] = (255, 255, 255)
         mask_map_img[cls == 2] = (229, 255, 50)
         mask_map_img[cls == 3] = (255, 159, 0)
         mask_map_img[cls == 4] = (255, 0, 0)
-        #for debugging original code
-        #compare_img = np.concatenate((result_dict['pre_image'], mask_map_img, result_dict['post_image']), axis=1)
 
-        out_dir = os.path.dirname(result_dict['out_overlay_path'])
-        with rasterio.open(result_dict['out_overlay_path'], 'w', **result_dict['geo_profile']) as dst:
+        # debug
+        # cv2.imwrite('test_map.png',mask_map_img,[cv2.IMWRITE_PNG_COMPRESSION, 9])
+
+        out_dir = os.path.dirname(sample_result_dict['out_overlay_path'])
+        with rasterio.open(sample_result_dict['out_overlay_path'], 'w', **sample_result_dict['geo_profile']) as dst:
             # Go from (x, y, bands) to (bands, x, y)
             mask_map_img = np.flipud(mask_map_img)
             mask_map_img = np.rot90(mask_map_img, 3)
             mask_map_img = np.moveaxis(mask_map_img, [0, 1, 2], [2, 1, 0])
             dst.write(mask_map_img)
 
+def run_inference(loader, model_wrapper, write_output=False, mode='loc', return_dict=None):
+    results = defaultdict(list)
+    pred_folder = model_wrapper.pred_folder
+    with torch.no_grad(): # This is really important to not explode memory with gradients!
+        for ii, result_dict in tqdm(enumerate(loader), total=len(loader)):
+            #print(result_dict['in_pre_path'])
+            debug=False
+            #if '116' in result_dict['in_pre_path'][0]:
+            #    import ipdb; ipdb.set_trace()
+            #    debug=True
+            out = model_wrapper.forward(result_dict['img'],debug=debug)
+            out = out.detach().cpu()
+            
+            del result_dict['img']
+
+            if 'pre_image' in result_dict:
+                result_dict['pre_image'] = result_dict['pre_image'].cpu().numpy()
+            if 'post_img' in result_dict:
+                result_dict['post_image'] = result_dict['post_image'].cpu().numpy()
+            if mode == 'loc':
+                result_dict['loc'] = out
+            elif mode == 'cls':
+                result_dict['cls'] = out
+            else:
+                raise ValueError('Incorrect mode -- must be loc or cls')
+            # Do this one separately because you can't return a class from a dataloader
+            result_dict['geo_profile'] = [loader.dataset.pairs[idx].opts.geo_profile
+                                          for idx in result_dict['idx']]
+            for k,v in result_dict.items():
+                results[k] = results[k] + list(v)
+                
+    # Making a list
+    results_list = [dict(zip(results,t)) for t in zip(*results.values())]
+    if write_output:
+        print('Writing results...')
+        makedirs(pred_folder, exist_ok=True)
+        for result in tqdm(results_list, total=len(results_list)):
+            # TODO: Multithread this to make it more efficient/maybe eliminate it from workflow
+            if mode == 'loc':
+                cv2.imwrite(path.join(pred_folder, 
+                                  result['in_pre_path'].split('/')[-1].replace('.tif', '_part1.png')),
+                                   np.array(result['loc'])[...], 
+                                   [cv2.IMWRITE_PNG_COMPRESSION, 9])
+            elif mode == 'cls':
+                cv2.imwrite(path.join(pred_folder, result['in_pre_path'].split('/')[-1].replace('.tif', '_part1.png')),
+                                      np.array(result['cls'])[..., :3], [cv2.IMWRITE_PNG_COMPRESSION, 9])
+                cv2.imwrite(path.join(pred_folder, result['in_pre_path'].split('/')[-1].replace('.tif', '_part2.png')),
+                                      np.array(result['cls'])[..., 2:], [cv2.IMWRITE_PNG_COMPRESSION, 9])    
+    if return_dict is None:
+        return results_list
+    else:
+        return_dict[f'{model_wrapper.model_size}{mode}'] = results_list
 
 def main():
+    
+    t0 = timeit.default_timer()
+
     parser = argparse.ArgumentParser(description='Create arguments for xView 2 handler.')
 
     parser.add_argument('--pre_directory', metavar='/path/to/pre/files/', type=Path, required=True)
@@ -177,6 +290,9 @@ def main():
     parser.add_argument('--destination_crs', default='EPSG:4326', help='The Coordinate Reference System (CRS) for the output overlays.')
     parser.add_argument('--create_overlay_mosaic', default=False, action='store_true', help='True/False to create a mosaic out of the overlays')
     parser.add_argument('--create_shapefile', default=False, action='store_true', help='True/False to create shapefile from damage overlay')
+    parser.add_argument('--dp_mode', default=False, action='store_true', help='True/False to run models serially, but using DataParallel')
+    parser.add_argument('--save_intermediates', default=False, action='store_true', help='True/False to store intermediate runfiles')
+
 
     args = parser.parse_args()
 
@@ -186,7 +302,6 @@ def main():
     print('Retrieving files...')
     pre_files = get_files(args.pre_directory)
     post_files = get_files(args.post_directory)
-
 
     print('Re-projecting...')
 
@@ -223,10 +338,11 @@ def main():
     pre_chips = create_chips(pre_mosaic, args.output_directory.joinpath('chips').joinpath('pre'), extent)
     post_chips = create_chips(post_mosaic, args.output_directory.joinpath('chips').joinpath('post'), extent)
 
-    assert len(pre_chips) == len(post_chips)
+    # debug
+    #pre_chips =  [bb for bb in pre_chips if '116' in str(bb)]
+    #post_chips =  [bb for bb in post_chips if '116' in str(bb)]
 
-    # Loading config
-    config = CfgNode.load_cfg(open(args.model_config_path, 'rb'))
+    assert len(pre_chips) == len(post_chips)
 
     # Defining dataset and dataloader
     pairs = []
@@ -240,28 +356,176 @@ def main():
             post)
             )
 
-    eval_dataset = XViewDataset(pairs, config, transform=build_image_transforms())
-    eval_dataloader = DataLoader(eval_dataset, batch_size=args.batch_size, num_workers=args.num_workers)
+    eval_loc_dataset = XViewDataset(pairs, 'loc')
+    eval_loc_dataloader = DataLoader(eval_loc_dataset,
+                                     batch_size=args.batch_size,
+                                     num_workers=args.num_workers,
+                                     shuffle=False,
+                                     pin_memory=True)
 
-    # Loading model
-    ckpt_path = args.model_weight_path
-    torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    eval_cls_dataset = XViewDataset(pairs, 'cls')
+    eval_cls_dataloader = DataLoader(eval_cls_dataset,
+                                     batch_size=args.batch_size,
+                                     num_workers=args.num_workers,
+                                     shuffle=False,
+                                     pin_memory=True)
 
-    model = get_model(config)
-    model.load_state_dict(torch.load(ckpt_path, map_location='cpu')['state_dict'])
-    model.eval()
 
-    model_wrapper = ModelWrapper(model, args.is_use_gpu, config.MODEL.IS_SPLIT_LOSS)
-    model_wrapper.eval()
+    if args.dp_mode:
+        results_dict = {}
 
-    # Running inference
-    print('Running inference...')
-    results_list = run_inference(args, config, model_wrapper, eval_dataset, eval_dataloader)
+        for sz in ['34', '50', '92', '154']:
+            print(f'Running models of size {sz}...')
+            return_dict = {}
+            loc_wrapper = XViewFirstPlaceLocModel(sz, dp_mode=args.dp_mode)
+
+            run_inference(eval_loc_dataloader,
+                                loc_wrapper,
+                                args.save_intermediates,
+                                'loc',
+                                return_dict)
+
+            del loc_wrapper
+
+            cls_wrapper = XViewFirstPlaceClsModel(sz, dp_mode=args.dp_mode)
+
+            run_inference(eval_cls_dataloader,
+                                cls_wrapper,
+                                args.save_intermediates,
+                                'cls',
+                                return_dict)
+
+            del cls_wrapper
+
+            results_dict.update({k:v for k,v in return_dict.items()})
+
+
+    elif torch.cuda.device_count() == 2:
+        # For 2-GPU machines [TESTED]
+
+        # Loading model
+        loc_gpus = {'34':[0,0,0],
+                    '50':[1,1,1],
+                    '92':[0,0,0],
+                    '154':[1,1,1]}
+
+        cls_gpus = {'34':[1,1,1],
+                    '50':[0,0,0],
+                    '92':[1,1,1],
+                    '154':[0,0,0]}
+
+        results_dict = {}
+
+        # Running inference
+        print('Running inference...')
+
+        for sz in loc_gpus.keys():
+            print(f'Running models of size {sz}...')
+            loc_wrapper = XViewFirstPlaceLocModel(sz, devices=loc_gpus[sz])
+            cls_wrapper = XViewFirstPlaceClsModel(sz, devices=cls_gpus[sz])
+
+            # Running inference
+            print('Running inference...')
+
+            # Run inference in parallel processes
+            manager = mp.Manager()
+            return_dict = manager.dict()
+            jobs = []
+
+            # Launch multiprocessing jobs for different pytorch jobs
+            p1 = mp.Process(target=run_inference,
+                            args=(eval_cls_dataloader,
+                                cls_wrapper,
+                                args.save_intermediates,
+                                'cls',
+                                return_dict))
+            p2 = mp.Process(target=run_inference,
+                            args=(eval_loc_dataloader,
+                                loc_wrapper,
+                                args.save_intermediates,
+                                'loc',
+                                return_dict))
+            p1.start()
+            p2.start()
+            jobs.append(p1)
+            jobs.append(p2)
+            for proc in jobs:
+                proc.join()
+
+            results_dict.update({k:v for k,v in return_dict.items()})
+
+    elif torch.cuda.device_count() == 8:
+        # For 8-GPU machines
+        # TODO: Test!
+
+        # Loading model
+        loc_gpus = {'34':[0,0,0],
+                    '50':[1,1,1],
+                    '92':[2,2,2],
+                    '154':[3,3,3]}
+
+        cls_gpus = {'34':[4,4,4],
+                    '50':[5,5,5],
+                    '92':[6,6,6],
+                    '154':[7,7,7]}
+
+        results_dict = {}
+         # Run inference in parallel processes
+        manager = mp.Manager()
+        return_dict = manager.dict()
+        jobs = []
+
+        for sz in loc_gpus.keys():
+            print(f'Adding jobs for size {sz}...')
+            loc_wrapper = XViewFirstPlaceLocModel(sz, devices=loc_gpus[sz])
+            cls_wrapper = XViewFirstPlaceClsModel(sz, devices=cls_gpus[sz])
+
+            # DEBUG
+            #run_inference(eval_loc_dataloader,
+            #                    loc_wrapper,
+            #                    True, # Don't write intermediate outputs
+            #                    'loc',
+            #                    return_dict)
+
+            #import ipdb; ipdb.set_trace()
+
+            # Launch multiprocessing jobs for different pytorch jobs
+            jobs.append(mp.Process(target=run_inference,
+                            args=(eval_cls_dataloader,
+                                cls_wrapper,
+                                args.save_intermediates, # Don't write intermediate outputs
+                                'cls',
+                                return_dict))
+                            )
+            jobs.append(mp.Process(target=run_inference,
+                            args=(eval_loc_dataloader,
+                                loc_wrapper,
+                                args.save_intermediates, # Don't write intermediate outputs
+                                'loc',
+                                return_dict))
+                            )
+
+        print('Running inference...')
+
+        for proc in jobs:
+            proc.start()
+        for proc in jobs:
+            proc.join()
+
+        results_dict.update({k:v for k,v in return_dict.items()})
+
+    else:
+        raise ValueError('Must use either 2 or 8 GPUs')
+
+    # Quick check to make sure the samples in cls and loc are in teh same orer
+    #assert(results_dict['34loc'][4]['in_pre_path'] == results_dict['34cls'][4]['in_pre_path'])
+
+    results_list = [{k:v[i] for k,v in results_dict.items()} for i in range(len(results_dict['34cls'])) ]
 
     # Running postprocessing
     p = mp.Pool(args.n_procs)
-    f_p = partial(postprocess_and_write, config)
+    #postprocess_and_write(results_list[0])
+    f_p = postprocess_and_write
     p.map(f_p, results_list)
 
     if args.create_overlay_mosaic:
@@ -280,10 +544,8 @@ def main():
 
     # Complete
     print('Run complete!')
-
+    elapsed = timeit.default_timer() - t0
+    print('Time: {:.3f} min'.format(elapsed / 60))
 
 if __name__ == '__main__':
-    if os.name == 'nt':
-        from multiprocessing import freeze_support()
-        freeze_support()
     main()

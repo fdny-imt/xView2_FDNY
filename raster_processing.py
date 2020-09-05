@@ -1,5 +1,6 @@
 from itertools import product
 import random
+import resource
 import string
 import subprocess
 import fiona
@@ -56,16 +57,9 @@ def create_mosaic(in_files, out_file):
     # This is some hacky, dumb shit
     # There is a limit on how many file descriptors we can have open at once
     # So we will up that limit for a bit and then set it back
-    if os.name == 'posix':
-        import resource
-        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
-        if len(in_files) >= soft:
-            resource.setrlimit(resource.RLIMIT_NOFILE, (len(in_files) * 2, hard))
-    elif os.name == 'nt':
-        import win32file
-        soft = win32file._getmaxstdio()
-        if len(in_files) >= soft:
-            win32file._setmaxstdio(len(in_files) * 2)
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    if len(in_files) >= soft:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (len(in_files) * 2, hard))
 
     file_objs = []
 

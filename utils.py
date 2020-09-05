@@ -1,211 +1,173 @@
-import os
-import math
-import random
-import errno
-
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torchvision.transforms as transforms
-from PIL import Image
+import cv2
 
-def build_image_transforms():
-    return transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-    ])
+#### Augmentations
+def shift_image(img, shift_pnt):
+    M = np.float32([[1, 0, shift_pnt[0]], [0, 1, shift_pnt[1]]])
+    res = cv2.warpAffine(img, M, (img.shape[1], img.shape[0]), borderMode=cv2.BORDER_REFLECT_101)
+    return res
+
+
+def rotate_image(image, angle, scale, rot_pnt):
+    rot_mat = cv2.getRotationMatrix2D(rot_pnt, angle, scale)
+    result = cv2.warpAffine(image, rot_mat, (image.shape[1], image.shape[0]), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REFLECT_101) #INTER_NEAREST
+    return result
+
+
+def gauss_noise(img, var=30):
+    row, col, ch = img.shape
+    mean = var
+    sigma = var**0.5
+    gauss = np.random.normal(mean,sigma,(row,col,ch))
+    gauss = gauss.reshape(row,col,ch)
+    gauss = (gauss - np.min(gauss)).astype(np.uint8)
+    return np.clip(img.astype(np.int32) + gauss, 0, 255).astype('uint8')
+
+
+def clahe(img, clipLimit=2.0, tileGridSize=(5,5)):
+    img_yuv = cv2.cvtColor(img, cv2.COLOR_RGB2LAB)
+    clahe = cv2.createCLAHE(clipLimit=clipLimit, tileGridSize=tileGridSize)
+    img_yuv[:, :, 0] = clahe.apply(img_yuv[:, :, 0])
+    img_output = cv2.cvtColor(img_yuv, cv2.COLOR_LAB2RGB)
+    return img_output
+
+
+def _blend(img1, img2, alpha):
+    return np.clip(img1 * alpha + (1 - alpha) * img2, 0, 255).astype('uint8')
+
+
+_alpha = np.asarray([0.114, 0.587, 0.299]).reshape((1, 1, 3))
+def _grayscale(img):
+    return np.sum(_alpha * img, axis=2, keepdims=True)
+
+
+def saturation(img, alpha):
+    gs = _grayscale(img)
+    return _blend(img, gs, alpha)
+
+
+def brightness(img, alpha):
+    gs = np.zeros_like(img)
+    return _blend(img, gs, alpha)
+
+
+def contrast(img, alpha):
+    gs = _grayscale(img)
+    gs = np.repeat(gs.mean(), 3)
+    return _blend(img, gs, alpha)
+
+
+def change_hsv(img, h, s, v):
+    hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    hsv = hsv.astype(int)
+    hsv[:,:,0] += h
+    hsv[:,:,0] = np.clip(hsv[:,:,0], 0, 255)
+    hsv[:,:,1] += s
+    hsv[:,:,1] = np.clip(hsv[:,:,1], 0, 255)
+    hsv[:,:,2] += v
+    hsv[:,:,2] = np.clip(hsv[:,:,2], 0, 255)
+    hsv = hsv.astype('uint8')
+    img = cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    return img
+
+def shift_channels(img, b_shift, g_shift, r_shift):
+    img = img.astype(int)
+    img[:,:,0] += b_shift
+    img[:,:,0] = np.clip(img[:,:,0], 0, 255)
+    img[:,:,1] += g_shift
+    img[:,:,1] = np.clip(img[:,:,1], 0, 255)
+    img[:,:,2] += r_shift
+    img[:,:,2] = np.clip(img[:,:,2], 0, 255)
+    img = img.astype('uint8')
+    return img
+    
+def invert(img):
+    return 255 - img
+
+def channel_shuffle(img):
+    ch_arr = [0, 1, 2]
+    np.random.shuffle(ch_arr)
+    img = img[..., ch_arr]
+    return img
+    
+#######
+
 
 class AverageMeter(object):
+    """Computes and stores the average and current value"""
     def __init__(self):
-        self.val = None
-        self.sum = None
-        self.cnt = None
-        self.avg = None
-        self.ema = None
-        self.initialized = False
-
+        self.reset()
+    def reset(self):
+        self.val = 0
+        self.avg = 0
+        self.sum = 0
+        self.count = 0
     def update(self, val, n=1):
-        if not self.initialized:
-            self.initialize(val, n)
-        else:
-            self.add(val, n)
-
-    def initialize(self, val, n):
-        self.val = val
-        self.sum = val * n
-        self.cnt = n
-        self.avg = val
-        self.ema = val
-        self.initialized = True
-
-    def add(self, val, n):
         self.val = val
         self.sum += val * n
-        self.cnt += n
-        self.avg = self.sum / self.cnt
-        self.ema = self.ema * 0.99 + self.val * 0.01
+        self.count += n
+        self.avg = self.sum / self.count
 
 
-def inter_and_union(pred, mask, num_class):
-    pred = np.asarray(pred, dtype=np.uint8).copy()
-    mask = np.asarray(mask, dtype=np.uint8).copy()
 
-    # 255 -> 0
-    pred += 1
-    mask += 1
-    pred = pred * (mask > 0)
-
-    inter = pred * (pred == mask)
-    (area_inter, _) = np.histogram(inter, bins=num_class, range=(1, num_class))
-    (area_pred, _) = np.histogram(pred, bins=num_class, range=(1, num_class))
-    (area_mask, _) = np.histogram(mask, bins=num_class, range=(1, num_class))
-    area_union = area_pred + area_mask - area_inter
-
-    return area_inter, area_union
+def preprocess_inputs(x):
+    x = np.asarray(x, dtype='float32')
+    x /= 127
+    x -= 1
+    return x
 
 
-def preprocess(image1, image2, mask, flip=False, scale=False, crop=False):
-    if isinstance(image1, np.ndarray):
-        image1 = Image.fromarray(image1)
-    if isinstance(image2, np.ndarray):
-        image2 = Image.fromarray(image2)
-    if isinstance(mask, np.ndarray):
-        mask = Image.fromarray(mask)
-    if flip:
-        if random.random() < 0.5:
-            image1 = image1.transpose(Image.FLIP_LEFT_RIGHT)
-            image2 = image2.transpose(Image.FLIP_LEFT_RIGHT)
-            mask = mask.transpose(Image.FLIP_LEFT_RIGHT)
+def dice(im1, im2, empty_score=1.0):
+    """
+    Computes the Dice coefficient, a measure of set similarity.
+    Parameters
+    ----------
+    im1 : array-like, bool
+        Any array of arbitrary size. If not boolean, will be converted.
+    im2 : array-like, bool
+        Any other array of identical size. If not boolean, will be converted.
+    Returns
+    -------
+    dice : float
+        Dice coefficient as a float on range [0,1].
+        Maximum similarity = 1
+        No similarity = 0
+        Both are empty (sum eq to zero) = empty_score
 
-        if random.random() < 0.5:
-            image1 = image1.transpose(Image.FLIP_TOP_BOTTOM)
-            image2 = image2.transpose(Image.FLIP_TOP_BOTTOM)
-            mask = mask.transpose(Image.FLIP_TOP_BOTTOM)
+    Notes
+    -----
+    The order of inputs for `dice` is irrelevant. The result will be
+    identical if `im1` and `im2` are switched.
+    """
+    im1 = np.asarray(im1).astype(np.bool)
+    im2 = np.asarray(im2).astype(np.bool)
 
-        if random.random() < 0.5:
-            image1 = image1.transpose(Image.ROTATE_90)
-            image2 = image2.transpose(Image.ROTATE_90)
-            mask = mask.transpose(Image.ROTATE_90)
+    if im1.shape != im2.shape:
+        raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
 
-    if scale:
-        w, h = image1.size
-        rand_log_scale = math.log(scale[0], 2) + random.random() * (math.log(scale[1], 2) - math.log(scale[0], 2))
-        random_scale = math.pow(2, rand_log_scale)
-        new_size = (int(round(w * random_scale)), int(round(h * random_scale)))
-        image1 = image1.resize(new_size, Image.ANTIALIAS)
-        image2 = image2.resize(new_size, Image.ANTIALIAS)
-        mask = mask.resize(new_size, Image.NEAREST)
+    im_sum = im1.sum() + im2.sum()
+    if im_sum == 0:
+        return empty_score
 
-    transform_list = []
-    transform_list.append(transforms.ToTensor())
-    transform_list.append(transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))
-    data_transforms = transforms.Compose(transform_list)
+    # Compute Dice coefficient
+    intersection = np.logical_and(im1, im2)
 
-    image1 = data_transforms(image1)
-    image2 = data_transforms(image2)
-    mask = torch.LongTensor(np.array(mask).astype(np.int64))
-
-    if crop:
-        h, w = image1.shape[1], image1.shape[2]
-        pad_tb = max(0, crop[0] - h)
-        pad_lr = max(0, crop[1] - w)
-        image1 = torch.nn.ZeroPad2d((0, pad_lr, 0, pad_tb))(image1)
-        image2 = torch.nn.ZeroPad2d((0, pad_lr, 0, pad_tb))(image2)
-        mask = torch.nn.ConstantPad2d((0, pad_lr, 0, pad_tb), 255)(mask)
-
-        h, w = image1.shape[1], image1.shape[2]
-        i = random.randint(0, h - crop[0])
-        j = random.randint(0, w - crop[1])
-        image1 = image1[:, i:i + crop[0], j:j + crop[1]]
-        image2 = image2[:, i:i + crop[0], j:j + crop[1]]
-        mask = mask[i:i + crop[0], j:j + crop[1]]
-
-    return image1, image2, mask
+    return 2. * intersection.sum() / im_sum
 
 
-class OhemCrossEntropy(nn.Module):
-    def __init__(self, ignore_label=-1, thres=0.7,
-                 min_kept=100000, weight=None):
-        super(OhemCrossEntropy, self).__init__()
-        self.thresh = thres
-        self.min_kept = max(1, min_kept)
-        self.ignore_label = ignore_label
-        self.criterion = nn.CrossEntropyLoss(weight=weight,
-                                             ignore_index=ignore_label,
-                                             reduction='none')
+def iou(im1, im2, empty_score=1.0):
+    im1 = np.asarray(im1).astype(np.bool)
+    im2 = np.asarray(im2).astype(np.bool)
 
-    def forward(self, score, target, **kwargs):
-        ph, pw = score.size(2), score.size(3)
-        h, w = target.size(1), target.size(2)
-        if ph != h or pw != w:
-            score = F.upsample(input=score, size=(h, w), mode='bilinear')
-        pred = F.softmax(score, dim=1)
-        pixel_losses = self.criterion(score, target).contiguous().view(-1)
-        mask = target.contiguous().view(-1) != self.ignore_label
+    if im1.shape != im2.shape:
+        raise ValueError("Shape mismatch: im1 and im2 must have the same shape.")
 
-        tmp_target = target.clone()
-        tmp_target[tmp_target == self.ignore_label] = 0
-        pred = pred.gather(1, tmp_target.unsqueeze(1))
-        pred, ind = pred.contiguous().view(-1, )[mask].contiguous().sort()
-        min_value = pred[min(self.min_kept, pred.numel() - 1)]
-        threshold = max(min_value, self.thresh)
+    union = np.logical_or(im1, im2)
+    im_sum = union.sum()
+    if im_sum == 0:
+        return empty_score
 
-        pixel_losses = pixel_losses[mask][ind]
-        pixel_losses = pixel_losses[pred < threshold]
-        return pixel_losses.mean()
+    # Compute Dice coefficient
+    intersection = np.logical_and(im1, im2)
 
-
-def adjust_learning_rate(optimizer, base_lr, max_iters, cur_iters, power=0.9):
-    lr = base_lr * ((1 - float(cur_iters) / max_iters) ** power)
-    optimizer.param_groups[0]['lr'] = lr
-    return lr
-
-
-class CRF_Refiner(object):
-    def __init__(self, shape):
-        self.dcrf = __import__('pydensecrf.densecrf')
-
-        self.d = self.dcrf.DenseCRF(shape[0], shape[1], 5)
-
-    def __call__(self, softmax, image):
-        """
-        :param softmax: [C, H, W]
-        :param image: [H, W, 3]
-        :return:
-        """
-        # The input should be the negative of the logarithm of probability values
-        # Look up the definition of the softmax_to_unary for more information
-        unary = self.dcrf.utils.softmax_to_unary(softmax)
-
-        # The inputs should be C-continious -- we are using Cython wrapper
-        unary = np.ascontiguousarray(unary)
-        self.d.setUnaryEnergy(unary)
-
-        # This potential penalizes small pieces of segmentation that are
-        # spatially isolated -- enforces more spatially consistent segmentations
-        feats = self.dcrf.utils.create_pairwise_gaussian(sdims=(10, 10), shape=image.shape[:2])
-
-        self.d.addPairwiseEnergy(feats, compat=3,
-                                 kernel=self.dcrf.DIAG_KERNEL,
-                                 normalization=self.dcrf.NORMALIZE_SYMMETRIC)
-
-        # This creates the color-dependent features --
-        # because the segmentation that we get from CNN are too coarse
-        # and we can use local color features to refine them
-        feats = self.dcrf.utils.create_pairwise_bilateral(sdims=(50, 50), schan=(20, 20, 20), img=image, chdim=2)
-
-        self.d.addPairwiseEnergy(feats, compat=10,
-                                 kernel=self.dcrf.DIAG_KERNEL,
-                                 normalization=self.dcrf.NORMALIZE_SYMMETRIC)
-        Q = self.d.inference(5)
-        res = np.argmax(Q, axis=0).reshape((image.shape[0], image.shape[1]))
-        return res
-
-
-def safe_mkdir(directory):
-    try:
-        os.makedirs(directory)
-    except OSError as e:
-        if e.errno != errno.EEXIST:
-            raise
+    return intersection.sum() / im_sum
