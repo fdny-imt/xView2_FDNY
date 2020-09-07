@@ -290,12 +290,12 @@ def main():
         dmg_polys = to_agol.create_damage_polys(agol_polys)
 
         try:
-            new_feat = to_agol.agol_append(args.agol_user,
+            new_feat, name = to_agol.agol_append(args.agol_user,
                                            args.agol_password,
                                            dmg_polys,
                                            args.agol_dmg_feature_service,
                                            args.agol_dmg_layer_num)
-            print(f'Appended {new_feat} new features to ArcGIS online.')
+            print(f'Appended {new_feat} new features to layer {name}.')
         except Exception as e:
             print(f'Error appending to ArcGIS online. Error: {e}')
 
@@ -304,12 +304,12 @@ def main():
         aoi_poly = to_agol.create_aoi_poly(agol_polys)
 
         try:
-            new_feat = to_agol.agol_append(args.agol_user,
+            new_feat, name = to_agol.agol_append(args.agol_user,
                                            args.agol_password,
                                            aoi_poly,
                                            args.agol_aoi_feature_service,
                                            args.agol_aoi_layer_num)
-            print(f'Appended {new_feat} new features to ArcGIS online.')
+            print(f'Appended {new_feat} new features to layer {name}.')
         except Exception as e:
             print(f'Error appending to ArcGIS online. Error: {e}')
 
@@ -318,12 +318,12 @@ def main():
         centroids = to_agol.create_centroids(agol_polys)
 
         try:
-            new_feat = to_agol.agol_append(args.agol_user,
+            new_feat, name = to_agol.agol_append(args.agol_user,
                                            args.agol_password,
                                            centroids,
                                            args.agol_centroid_feature_service,
                                            args.agol_centroid_layer_num)
-            print(f'Appended {new_feat} new features to ArcGIS online.')
+            print(f'Appended {new_feat} new features to layer {name}.')
         except Exception as e:
             print(f'Error appending to ArcGIS online. Error: {e}')
 

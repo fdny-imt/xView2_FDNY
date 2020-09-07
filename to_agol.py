@@ -108,4 +108,4 @@ def agol_append(user, pw, src_feats, dest_fs, layer):
     layer = gis.content.get(dest_fs).layers[int(layer)]
     layer.edit_features(adds=src_feats, rollback_on_failure=True)
 
-    return len(src_feats)
+    return len(src_feats), layer.properties.name
