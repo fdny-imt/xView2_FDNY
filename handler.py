@@ -1,28 +1,19 @@
 import argparse
-from functools import partial
-import glob
-import multiprocessing as mp
 import os
-from pathlib import Path
-import random
-import resource
-import string
-import sys
-
+import multiprocessing as mp
 import numpy as np
-from raster_processing import *
-from to_agol import *
+import raster_processing
+import to_agol
 import rasterio.warp
-from shapely.geometry import mapping
 import torch
+import inference
+from functools import partial
+from pathlib import Path
+
 from torch.utils.data import DataLoader
 from yacs.config import CfgNode
-
-from tqdm import tqdm
-
 from dataset import XViewDataset
 from models.dual_hrnet import get_model
-import inference
 from inference import ModelWrapper, argmax, run_inference
 from utils import build_image_transforms
 
@@ -113,7 +104,7 @@ def reproject_helper(args, raster_tuple, procnum, return_dict):
     basename = raster_file.stem
     dest_file = args.staging_directory.joinpath('pre').joinpath(f'{basename}.tif')
     try:
-        return_dict[procnum] = (pre_post, reproject(raster_file, dest_file, src_crs, args.destination_crs))
+        return_dict[procnum] = (pre_post, raster_processing.reproject(raster_file, dest_file, src_crs, args.destination_crs))
     except ValueError:
         return None
 
@@ -218,15 +209,15 @@ def main():
     post_reproj = [x[1] for x in reproj if x[0] == "post"]
 
     print("Creating pre mosaic...")
-    pre_mosaic = create_mosaic(pre_reproj, Path(f"{args.output_directory}/mosaics/pre.tif"))
+    pre_mosaic = raster_processing.create_mosaic(pre_reproj, Path(f"{args.output_directory}/mosaics/pre.tif"))
     print("Creating post mosaic...")
-    post_mosaic = create_mosaic(post_reproj, Path(f"{args.output_directory}/mosaics/post.tif"))
+    post_mosaic = raster_processing.create_mosaic(post_reproj, Path(f"{args.output_directory}/mosaics/post.tif"))
 
-    extent = get_intersect(pre_mosaic, post_mosaic)
+    extent = raster_processing.get_intersect(pre_mosaic, post_mosaic)
 
     print('Chipping...')
-    pre_chips = create_chips(pre_mosaic, args.output_directory.joinpath('chips').joinpath('pre'), extent)
-    post_chips = create_chips(post_mosaic, args.output_directory.joinpath('chips').joinpath('post'), extent)
+    pre_chips = raster_processing.create_chips(pre_mosaic, args.output_directory.joinpath('chips').joinpath('pre'), extent)
+    post_chips = raster_processing.create_chips(post_mosaic, args.output_directory.joinpath('chips').joinpath('post'), extent)
 
     assert len(pre_chips) == len(post_chips)
 
@@ -274,7 +265,7 @@ def main():
         p = Path(args.output_directory) / "over"
         overlay_files = get_files(p)
         overlay_files = [x for x in overlay_files]
-        overlay_mosaic = create_mosaic(overlay_files, Path(f"{args.output_directory}/mosaics/overlay.tif"))
+        overlay_mosaic = raster_processing.create_mosaic(overlay_files, Path(f"{args.output_directory}/mosaics/overlay.tif"))
 
     # Get files for creating shapefile and/or pushing to AGOL
     if args.create_shapefile or args.agol_user:
@@ -282,15 +273,15 @@ def main():
 
     if args.create_shapefile:
         print('Creating shapefile')
-        create_shapefile(dmg_files,
+        raster_processing.create_shapefile(dmg_files,
                          Path(args.output_directory).joinpath('shapes') / 'damage.shp',
                          args.destination_crs)
 
     if args.agol_user and args.agol_password and args.agol_feature_service and args.agol_layer_num:
-        agol_polys = create_polys(dmg_files)
-        feat_set = get_feature_set(agol_polys)
+        agol_polys = to_agol.create_polys(dmg_files)
+        feat_set = to_agol.get_feature_set(agol_polys)
         try:
-            new_feat = agol_append(args.agol_user,
+            new_feat = to_agol.agol_append(args.agol_user,
                                    args.agol_password,
                                    feat_set,
                                    args.agol_feature_service,
