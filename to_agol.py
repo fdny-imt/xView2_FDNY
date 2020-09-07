@@ -93,7 +93,7 @@ def create_centroids(features):
     return centroids
 
 
-def create_damage_poly(polys):
+def create_damage_polys(polys):
     polygons = []
     for geom, val in polys:
         esri_shape = arcgis.geometry.Geometry.from_shapely(geom)
@@ -106,7 +106,6 @@ def create_damage_poly(polys):
 def agol_append(user, pw, src_feats, dest_fs, layer):
     gis = arcgis.gis.GIS(username=user, password=pw)
     layer = gis.content.get(dest_fs).layers[int(layer)]
-    print(isinstance(src_feats[0], arcgis.features.Feature))
-    print(layer.edit_features(adds=src_feats, rollback_on_failure=True))
+    layer.edit_features(adds=src_feats, rollback_on_failure=True)
 
     return len(src_feats)
