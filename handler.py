@@ -151,6 +151,15 @@ def postprocess_and_write(config, result_dict):
             dst.write(mask_map_img)
 
 
+def agol_arg_check(agol_args):
+    if (any(agol_args) and not all(agol_args)):
+        print('Missing AGOL parameters. Skipping AGOL push.')
+        return False
+
+    else:
+        return True
+
+
 def main():
     parser = argparse.ArgumentParser(description='Create arguments for xView 2 handler.')
 
@@ -175,6 +184,14 @@ def main():
     parser.add_argument('--agol_layer_num', default=None, help='Layer in ArcGIS feature service to append (number)')
 
     args = parser.parse_args()
+
+    # Check that all flags required for AGOL push are present
+    agol_args = [args.agol_user, args.agol_password, args.agol_feature_service, args.agol_layer_num]
+
+    if any(agol_args):
+        agol_push = agol_arg_check(agol_args)
+    else:
+        agol = False
 
     make_staging_structure(args.staging_directory)
     make_output_structure(args.output_directory)
@@ -268,7 +285,7 @@ def main():
         overlay_mosaic = raster_processing.create_mosaic(overlay_files, Path(f"{args.output_directory}/mosaics/overlay.tif"))
 
     # Get files for creating shapefile and/or pushing to AGOL
-    if args.create_shapefile or args.agol_user:
+    if args.create_shapefile or agol_push:
         dmg_files = get_files(Path(args.output_directory) / 'dmg')
 
     if args.create_shapefile:
@@ -277,7 +294,7 @@ def main():
                          Path(args.output_directory).joinpath('shapes') / 'damage.shp',
                          args.destination_crs)
 
-    if args.agol_user and args.agol_password and args.agol_feature_service and args.agol_layer_num:
+    if agol_push:
         agol_polys = to_agol.create_polys(dmg_files)
         feat_set = to_agol.get_feature_set(agol_polys)
         try:
