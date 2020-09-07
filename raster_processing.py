@@ -246,7 +246,3 @@ def create_shapefile(in_files, out_shapefile, dest_crs):
                 'geometry': mapping(polygon),
                 'properties': {'dmg': int(px_val)}
             })
-
-
-    ####
-

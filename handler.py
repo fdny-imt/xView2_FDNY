@@ -151,15 +151,6 @@ def postprocess_and_write(config, result_dict):
             dst.write(mask_map_img)
 
 
-def agol_arg_check(agol_args):
-    if (any(agol_args) and not all(agol_args)):
-        print('Missing AGOL parameters. Skipping AGOL push.')
-        return False
-
-    else:
-        return True
-
-
 def main():
     parser = argparse.ArgumentParser(description='Create arguments for xView 2 handler.')
 
@@ -180,18 +171,17 @@ def main():
     parser.add_argument('--create_shapefile', default=False, action='store_true', help='True/False to create shapefile from damage overlay')
     parser.add_argument('--agol_user', default=None, help='ArcGIS online username')
     parser.add_argument('--agol_password', default=None, help='ArcGIS online password')
-    parser.add_argument('--agol_feature_service', default=None, help='ArcGIS online feature service to append')
-    parser.add_argument('--agol_layer_num', default=None, help='Layer in ArcGIS feature service to append (number)')
+    parser.add_argument('--agol_dmg_feature_service', default=None, help='ArcGIS online feature service to append damage polygons.')
+    parser.add_argument('--agol_dmg_layer_num', default=None, help='Layer number in ArcGIS feature service to append damage polygons.')
+    parser.add_argument('--agol_centroid_feature_service', default=None, help='ArcGIS online feature service to append damage centroids.')
+    parser.add_argument('--agol_centroid_layer_num', default=None, help='Layer number in ArcGIS feature service to append damage centroids.')
+    parser.add_argument('--agol_aoi_feature_service', default=None, help='ArcGIS online feature service to append bounds polygon.')
+    parser.add_argument('--agol_aoi_layer_num', default=None, help='Layer number in ArcGIS feature service to append bounds polygon.')
 
     args = parser.parse_args()
 
-    # Check that all flags required for AGOL push are present
-    agol_args = [args.agol_user, args.agol_password, args.agol_feature_service, args.agol_layer_num]
-
-    if any(agol_args):
-        agol_push = agol_arg_check(agol_args)
-    else:
-        agol = False
+    # Determine what, if any items we are pushing to AGOL
+    agol_push = to_agol.agol_arg_check(args)
 
     make_staging_structure(args.staging_directory)
     make_output_structure(args.output_directory)
@@ -296,7 +286,7 @@ def main():
 
     if agol_push:
         agol_polys = to_agol.create_polys(dmg_files)
-        feat_set = to_agol.get_feature_set(agol_polys)
+        feat_set = to_agol.create_damage_poly(agol_polys)
         try:
             new_feat = to_agol.agol_append(args.agol_user,
                                    args.agol_password,
