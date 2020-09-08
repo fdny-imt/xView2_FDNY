@@ -180,7 +180,7 @@ def main():
 
     args = parser.parse_args()
 
-    # Determine what, if any items we are pushing to AGOL
+    # Determine what, if any, items we are pushing to AGOL
     agol_push = to_agol.agol_arg_check(args)
 
     make_staging_structure(args.staging_directory)
@@ -275,7 +275,7 @@ def main():
         overlay_mosaic = raster_processing.create_mosaic(overlay_files, Path(f"{args.output_directory}/mosaics/overlay.tif"))
 
     # Get files for creating shapefile and/or pushing to AGOL
-    if args.create_shapefile or agol_push:
+    if args.create_shapefile or agol_push.get('dmg'):
         dmg_files = get_files(Path(args.output_directory) / 'dmg')
 
     if args.create_shapefile:
@@ -284,48 +284,35 @@ def main():
                          Path(args.output_directory).joinpath('shapes') / 'damage.shp',
                          args.destination_crs)
 
-    if agol_push:
+    if agol_push.get('dmg'):
+
+        gis = to_agol.connect_gis(username=args.agol_user, password=args.agol_password)
 
         agol_polys = to_agol.create_polys(dmg_files)
         dmg_polys = to_agol.create_damage_polys(agol_polys)
 
-        try:
-            new_feat, name = to_agol.agol_append(args.agol_user,
-                                           args.agol_password,
-                                           dmg_polys,
-                                           args.agol_dmg_feature_service,
-                                           args.agol_dmg_layer_num)
-            print(f'Appended {new_feat} new features to layer {name}.')
-        except Exception as e:
-            print(f'Error appending to ArcGIS online. Error: {e}')
+        result = to_agol.agol_append(gis,
+                                       dmg_polys,
+                                       args.agol_dmg_feature_service,
+                                       args.agol_dmg_layer_num)
 
-    if agol_push[0]:
+    if agol_push.get('aoi'):
 
         aoi_poly = to_agol.create_aoi_poly(agol_polys)
 
-        try:
-            new_feat, name = to_agol.agol_append(args.agol_user,
-                                           args.agol_password,
-                                           aoi_poly,
-                                           args.agol_aoi_feature_service,
-                                           args.agol_aoi_layer_num)
-            print(f'Appended {new_feat} new features to layer {name}.')
-        except Exception as e:
-            print(f'Error appending to ArcGIS online. Error: {e}')
+        result = to_agol.agol_append(gis,
+                                       aoi_poly,
+                                       args.agol_aoi_feature_service,
+                                       args.agol_aoi_layer_num)
 
-    if agol_push[1]:
+    if agol_push.get('centroids'):
 
         centroids = to_agol.create_centroids(agol_polys)
 
-        try:
-            new_feat, name = to_agol.agol_append(args.agol_user,
-                                           args.agol_password,
-                                           centroids,
-                                           args.agol_centroid_feature_service,
-                                           args.agol_centroid_layer_num)
-            print(f'Appended {new_feat} new features to layer {name}.')
-        except Exception as e:
-            print(f'Error appending to ArcGIS online. Error: {e}')
+        result = to_agol.agol_append(gis,
+                                       centroids,
+                                       args.agol_centroid_feature_service,
+                                       args.agol_centroid_layer_num)
 
     # Complete
     print('Run complete!')
