@@ -2,6 +2,7 @@ import cv2
 import os
 from skimage.io import imread
 import tifffile
+import numpy as np
 import torch
 from torch.utils.data import Dataset
 from utils import *
@@ -27,6 +28,11 @@ class XViewDataset(Dataset):
         fl = self.pairs[idx]
         pre_image = cv2.imread(str(fl.opts.in_pre_path), cv2.IMREAD_COLOR)
         post_image = cv2.imread(str(fl.opts.in_post_path), cv2.IMREAD_COLOR)
+        # if post is black (i.e. all zeros), make pre all black too so no
+        # preds are output
+        if (len(np.unique(post_image))==1 and pre_image.flatten()[0] == 0):
+            pre_image = post_image
+            print("Adjusting sample")
         if self.mode == 'cls':
             img = np.concatenate([pre_image, post_image], axis=2)
         elif self.mode == 'loc':
